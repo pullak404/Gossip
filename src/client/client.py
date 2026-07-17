@@ -1,20 +1,128 @@
-
+# import socket
+# import threading
 import asyncio
+import sys
+import json
 import websockets
+# HEADER = 64 # gives the length of the msg that clients will send
+# FORMAT = 'utf-8'
+# DISCONNECT_MESSAGE = "!DISCONNECT"
 
-async def listen_and_talk():
-    uri = "ws://localhost:8765"
+# PORT = 9999
+# SERVER = socket.gethostbyname(socket.gethostname())
+# ADDR = (SERVER, PORT)
+
+# client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+# client.connect(ADDR)
+
+
+# def send(msg):
+#     message = msg.encode(FORMAT)
+#     msg_len = len(message)
+#     send_len = str(msg_len).encode(FORMAT)
+#     send_len += b' '*(HEADER - len(send_len)) # adding padding for it to be 64 bytes long
+#     client.send(send_len)
+#     client.send(message)
+
+# send("Hello World!")
+# send("Hello World!")
+# send("Hello World!")
+# send(DISCONNECT_MESSAGE)
+
+
+# ANSI Escape color codes for visual tracking inside terminal windows
+COLOR_SYS = "\033[93m"  # Yellow system notifications
+COLOR_MSG = "\033[94m"  # Blue remote messages
+COLOR_ERR = "\033[91m"  # Red connection errors
+COLOR_RST = "\033[0m"   # Reset code to default terminal state
+
+async def receive_loop(websocket):
+    """Inbound stream execution layer routing updates to display instantly."""
+    async for raw_payload in websocket:
+        payload = json.loads(raw_payload)
+        
+        # Clear current input line placeholder, print message, restore user prompt character
+        print("\r\033[K", end="") 
+        if payload["type"] == "sys":
+            print(f"{COLOR_SYS}{payload['text']}{COLOR_RST}")
+        elif payload["type"] == "msg":
+            print(f"{COLOR_MSG}[{payload['sender']}]{COLOR_RST}: {payload['text']}")
+            
+        print("> ", end="", flush=True)
+
+async def send_loop(websocket):
+    """Intercepts local standard keyboard streams without blocking the thread pool."""
+    loop = asyncio.get_event_loop()
+    while True:
+        # Execute sys.stdin block off the main asynchronous thread loop
+        user_input = await loop.run_in_executor(None, sys.stdin.readline)
+        sanitized = user_input.strip()
+        
+        if sanitized.lower() == "exit":
+            print("\nExiting interface application stack.")
+            # Hard exit the program when user manually requests escape
+            sys.exit(0)
+            
+        if sanitized:
+            await websocket.send(sanitized)
+        print("> ", end="", flush=True)
+
+async def manage_connection(room_id, user_name):
+    """Supervisor loop that connects, executes chat tasks, and retries on failure."""
+    server_uri = "ws://127.0.0.1:8765"
     
-    # Establish connection using the 'ws://' protocol
-    async with websockets.connect(uri) as websocket:
-        print("Connected to the server!")
-        
-        # Send a message to the server
-        await websocket.send("Hello Server!")
-        
-        # Wait and listen for any incoming broadcast messages
-        async for message in websocket:
-            print(f"Broadcast from server: {message}")
+    # Backoff configurations
+    base_delay = 1.0      # Start with a 1-second delay
+    max_delay = 32.0      # Cap the max wait ceiling at 32 seconds
+    factor = 2.0          # Exponential backoff factor (double the time each failure)
+    current_delay = base_delay
+
+    while True:
+        try:
+            print(f"\r\033[KConnecting to backend gateway {server_uri}...", flush=True)
+            
+            async with websockets.connect(server_uri) as websocket:
+                # Reset exponential backoff penalty tracker on a successful handshake connection
+                current_delay = base_delay
+                
+                # Deliver Initial Configuration Handshake Frame instantly upon connection
+                handshake_payload = {"room_id": room_id, "user_name": user_name}
+                await websocket.send(json.dumps(handshake_payload))
+                
+                print(f"Connected! Type messages below. Type 'exit' to escape.\n> ", end="", flush=True)
+                
+                # Run parallel tasks together concurrently until connection breaks
+                # loop.create_task or asyncio.gather allows exceptions to bubble up here
+                await asyncio.gather(
+                    receive_loop(websocket),
+                    send_loop(websocket)
+                )
+
+        except (websockets.exceptions.ConnectionClosed, OSError, ConnectionRefusedError) as e:
+            print(f"\r\033[K{COLOR_ERR}❌ Network error / Connection lost ({type(e).__name__}).{COLOR_RST}")
+            print(f"{COLOR_SYS}🔄 Retrying in {current_delay} seconds... (Type 'exit' to abort){COLOR_RST}\n> ", end="", flush=True)
+            
+            # Non-blocking pause for the duration of current backoff penalty
+            await asyncio.sleep(current_delay)
+            
+            # Progress backoff scaling calculation (e.g., 1s -> 2s -> 4s -> 8s -> 16s -> 32s)
+            current_delay = min(current_delay * factor, max_delay)
+            
+        except Exception as dynamic_error:
+            # Handle unexpected edge case loops explicitly to protect app workflow execution stability
+            print(f"\nCritical Unhandled Pipeline Error: {dynamic_error}")
+            break
+
+async def start_client():
+    # Gather metadata configurations up front so it persists across reconnection runs
+    room_id = input("Enter Room Key ID (Default: general): ").strip() or "general"
+    user_name = input("Enter Chosen Display Handle Name: ").strip() or "User"
+    
+    await manage_connection(room_id, user_name)
 
 if __name__ == "__main__":
-    asyncio.run(listen_and_talk())
+    try:
+        asyncio.run(start_client())
+    except KeyboardInterrupt:
+        print("\nExiting interface application stack.")
+

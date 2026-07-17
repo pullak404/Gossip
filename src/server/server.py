@@ -1,90 +1,112 @@
-import asyncio
 
-# Keep track of all connected client writers
-connected_clients = set()
 
-async def handle_client(reader, writer):
-    """Handles an individual user connection."""
-    connected_clients.add(writer)
-    addr = writer.get_extra_info('peername')
-    print(f"New connection from {addr}")
+# class ConnectionManager:
+#     def __init__(self):
+#         # Maps room_id -> set of active WebSocket connections on THIS server instance
+#         self.active_connections: dict[str, set[]] = {}
 
-    try:
-        while True:
-            # Wait efficiently for this specific client to send text
-            data = await reader.readline()
-            if not data:
-                break # Client disconnected
-            
-            message = f"{addr}: {data.decode()}"
-            
-            # Broadcast the message to all other connected users concurrently
-            # if a client has a slow connection, it won't block the loop
-            for client in connected_clients:
-                if client != writer:
-                    client.write(message.encode())
-                    await client.drain() # Yield control while sending data
+#     async def connect(self, websocket, room_id: str):
+#         await websocket.accept()
+#         if room_id not in self.active_connections:
+#             self.active_connections[room_id] = set()
+#         self.active_connections[room_id].add(websocket)
 
-    except asyncio.CancelledError:
-        pass
-    finally:
-        # Clean up on disconnect
-        connected_clients.remove(writer)
-        writer.close()
-        await writer.wait_closed()
+#     def disconnect(self, websocket: WebSocket, room_id: str):
+#         if room_id in self.active_connections:
+#             self.active_connections[room_id].discard(websocket)
+#             if not self.active_connections[room_id]:
+#                 del self.active_connections[room_id]
 
-async def main():
-    # Start a TCP socket server listening on port 8888
-    server = await asyncio.start_server(handle_client, '127.0.0.1', 8888)
-    print("Chat server running on port 8888...")
-    async with server:
-        await server.serve_forever()
+#     async def broadcast_to_local_room(self, room_id: str, message: str):
+#         """Sends the message to all clients connected to this specific server instance."""
+#         if room_id in self.active_connections:
+#             # Create a snapshot list to avoid runtime size change errors during iteration
+#             for connection in list(self.active_connections[room_id]):
+#                 try:
+#                     await connection.send_text(message)
+#                 except Exception:
+#                     # Clear broken connections immediately
+#                     self.disconnect(connection, room_id)
 
-# Run the event loop
-asyncio.run(main())
+# manager = ConnectionManager()
+
 
 import asyncio
+import json
+import logging
+
 import websockets
 
-# Keep track of all actively connected WebSocket clients
-connected_clients = set()
+# Configure minimal console feedback
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 
-async def chat_handler(websocket):
-    """Handles the lifecycle of a single WebSocket connection."""
-    # Register the new client
-    connected_clients.add(websocket)
-    print(f"Client connected. Total clients: {len(connected_clients)}")
-    
+# Global tracking registry: room_id -> set(WebSocketServerProtocol)
+ROOMS = {}
+
+
+async def broadcast_to_room(room_id, payload_dict, exclude_socket=None):
+    """Iterates over active room sockets to publish structured JSON payloads."""
+    if room_id in ROOMS:
+        message = json.dumps(payload_dict)
+        # Snapshot list to avoid mutating the set while iterating over it
+        for connection in list(ROOMS[room_id]):
+            if connection != exclude_socket:
+                try:
+                    await connection.send(message)
+                except websockets.exceptions.ConnectionClosed:
+                    ROOMS[room_id].discard(connection)
+
+
+async def handle_client(websocket):
+    """Lifecycle handler executed concurrently for every incoming client."""
+    # The client must send a connection handshake packet containing metadata
     try:
-        # Loop stays alive as long as the client remains connected
-        async for message in websocket:
-            print(f"Received: {message}")
-            
-            # Broadcast the incoming message to every OTHER connected client
-            if connected_clients:
-                # Create a list of send tasks to run them concurrently
-                broadcast_tasks = [
-                    client.send(f"Anonymous: {message}") 
-                    for client in connected_clients 
-                    if client != websocket
-                ]
-                if broadcast_tasks:
-                    await asyncio.gather(*broadcast_tasks)
-                    
-    except websockets.exceptions.ConnectionClosedOK:
-        print("Client disconnected cleanly.")
-    except websockets.exceptions.ConnectionClosedError:
-        print("Client disconnected unexpectedly.")
+        init_message = await websocket.recv()
+        handshake = json.loads(init_message)
+        room_id = handshake["room_id"]
+        user_name = handshake["user_name"]
+    except Exception:
+        logging.error("Invalid client handshake. Dropping connection.")
+        return
+
+    # Add client socket to room roster
+    if room_id not in ROOMS:
+        ROOMS[room_id] = set()
+    ROOMS[room_id].add(websocket)
+    logging.info(f"User {user_name} joined target room: {room_id}")
+
+    # Broadcast arrival status frame
+    await broadcast_to_room(room_id, {"type": "sys", "text": f"📢 System: {user_name} joined the room."})
+
+    try:
+        async for raw_message in websocket:
+            # Relay standard message payload out to all other clients in the same room
+            await broadcast_to_room(
+                room_id,
+                {"type": "msg", "sender": user_name, "text": raw_message},
+                exclude_socket=websocket,
+            )
+    except websockets.exceptions.ConnectionClosed:
+        print("connecntion closed")
     finally:
-        # Always clean up the set when a user leaves
-        connected_clients.remove(websocket)
-        print(f"Client removed. Total clients: {len(connected_clients)}")
+        # Graceful connection breakdown
+        if room_id in ROOMS:
+            ROOMS[room_id].discard(websocket)
+            if not ROOMS[room_id]:
+                del ROOMS[room_id]
+        logging.info(f"User {user_name} disconnected from room: {room_id}")
+        await broadcast_to_room(room_id, {"type": "sys", "text": f"🛑 System: {user_name} left the room."})
+
 
 async def main():
-    # Start the WebSocket server on localhost port 8765
-    async with websockets.serve(chat_handler, "localhost", 8765):
-        print("WebSocket server running on ws://localhost:8765")
-        await asyncio.Future()  # Keeps the server running forever
+    # Bind server to localhost port 8765
+    async with websockets.serve(handle_client, "127.0.0.1", 8765):
+        logging.info("WebSocket infrastructure deployed on ws://127.0.0.1:8765")
+        await asyncio.Future()  # Run forever
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.info("Server down.")
