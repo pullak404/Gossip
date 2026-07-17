@@ -9,5 +9,4 @@ A Python based end-to-end encrypted communication app
     - MongoDB - data storage
 
 ## How To Use
-```Python client.py
-```
+    Python client.py
