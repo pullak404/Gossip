@@ -4,6 +4,7 @@ import asyncio
 import sys
 import json
 import websockets
+import os
 # HEADER = 64 # gives the length of the msg that clients will send
 # FORMAT = 'utf-8'
 # DISCONNECT_MESSAGE = "!DISCONNECT"
@@ -67,7 +68,7 @@ async def send_loop(websocket):
             await websocket.send(sanitized)
         print("> ", end="", flush=True)
 
-async def manage_connection(room_id, user_name):
+async def manage_connection(user_name,password):
     """Supervisor loop that connects, executes chat tasks, and retries on failure."""
     server_uri = "ws://127.0.0.1:8765"
     
@@ -86,7 +87,7 @@ async def manage_connection(room_id, user_name):
                 current_delay = base_delay
                 
                 # Deliver Initial Configuration Handshake Frame instantly upon connection
-                handshake_payload = {"room_id": room_id, "user_name": user_name}
+                handshake_payload = {"user_name": user_name,"password": password}
                 await websocket.send(json.dumps(handshake_payload))
                 
                 print(f"Connected! Type messages below. Type 'exit' to escape.\n> ", end="", flush=True)
@@ -98,13 +99,32 @@ async def manage_connection(room_id, user_name):
                     send_loop(websocket)
                 )
 
-        except (websockets.exceptions.ConnectionClosed, OSError, ConnectionRefusedError) as e:
+        except websockets.exceptions.ConnectionClosed as e:
+            # Codes the server sends when it deliberately rejects the handshake
+            # (bad user, bad credentials, etc). Retrying won't help here, so stop.
+            NON_RECOVERABLE_CODES = {4004, 4001}
+
+            if e.code in NON_RECOVERABLE_CODES:
+                print(f"\r\033[K{COLOR_ERR}Connection rejected by server ({e.code}: {e.reason}).{COLOR_RST}")
+                print(f"{COLOR_ERR}Not retrying — check your username/password and restart the client.{COLOR_RST}")
+                os._exit(1)
+
             print(f"\r\033[K{COLOR_ERR}❌ Network error / Connection lost ({type(e).__name__}).{COLOR_RST}")
             print(f"{COLOR_SYS}🔄 Retrying in {current_delay} seconds... (Type 'exit' to abort){COLOR_RST}\n> ", end="", flush=True)
-            
+
             # Non-blocking pause for the duration of current backoff penalty
             await asyncio.sleep(current_delay)
-            
+
+            # Progress backoff scaling calculation (e.g., 1s -> 2s -> 4s -> 8s -> 16s -> 32s)
+            current_delay = min(current_delay * factor, max_delay)
+
+        except (OSError, ConnectionRefusedError) as e:
+            print(f"\r\033[K{COLOR_ERR}❌ Network error / Connection lost ({type(e).__name__}).{COLOR_RST}")
+            print(f"{COLOR_SYS}🔄 Retrying in {current_delay} seconds... (Type 'exit' to abort){COLOR_RST}\n> ", end="", flush=True)
+
+            # Non-blocking pause for the duration of current backoff penalty
+            await asyncio.sleep(current_delay)
+
             # Progress backoff scaling calculation (e.g., 1s -> 2s -> 4s -> 8s -> 16s -> 32s)
             current_delay = min(current_delay * factor, max_delay)
             
@@ -115,14 +135,13 @@ async def manage_connection(room_id, user_name):
 
 async def start_client():
     # Gather metadata configurations up front so it persists across reconnection runs
-    room_id = input("Enter Room Key ID (Default: general): ").strip() or "general"
     user_name = input("Enter Chosen Display Handle Name: ").strip() or "User"
-    
-    await manage_connection(room_id, user_name)
+    password = input("Enter your password: ").strip()
+
+    await manage_connection(user_name,password)
 
 if __name__ == "__main__":
     try:
         asyncio.run(start_client())
     except KeyboardInterrupt:
         print("\nExiting interface application stack.")
-
