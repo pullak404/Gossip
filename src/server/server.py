@@ -157,7 +157,7 @@ async def join_room_flow(websocket, Room_Manager, user_name, room_name):
                 pass
             else:
                 payload = {"type": "msg", "sender": user_name, "text": message}
-                await broadcast_to_room(Room_Manager.rooms,room_name, user_name, payload)
+                await broadcast_to_room(Room_Manager.rooms, room_name, payload, exclude_socket=websocket)
     except websockets.exceptions.ConnectionClosed:
         logging.info("Connection closed")
     finally:
