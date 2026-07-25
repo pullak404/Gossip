@@ -103,8 +103,7 @@ class RoomManager:
                 raise PermissionError("Invalid room password")
             room.members.add(username)
             add_jsonl(ROOM_FILE,room_name,"members",username)
-            # print("done") # write a pretty statement like joined this chatroom or something [NEW MEMBER] username joined CHATROOM_NAME
-        # room.active_connections.add(websocket)
+        room.active_connections.add(websocket)
         return len(room.active_connections)
 
 

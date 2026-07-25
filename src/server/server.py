@@ -126,16 +126,21 @@ async def send_room_list(websocket,user_name,Room_Manager):
         await broadcast_to_user(websocket,f"{i}. {rooms}","sys")
 
 async def prompt_room_selection(websocket, user_name, Room_Manager):
-    pass
+    await broadcast_to_user(websocket,"Enter Room to join: ","sys")
+    room_name = await websocket.recv()
+    await broadcast_to_user(websocket,"Enter password: ","sys")
+    password = await websocket.recv()
+    await Room_Manager.join(room_name,user_name,websocket,password)
+    return room_name
 
 async def notify_join(rooms,room_name, user_name):
     # Broadcast arrival status frame
     logging.info(f"User {user_name} joined target room: {room_name}")
-    await broadcast_to_room(rooms, room_name, {"type": "sys", "text": f"📢 System: {user_name} joined the room."})
+    await broadcast_to_room(rooms, room_name, {"type": "sys", "text": f"[SYSTEM] {user_name} joined the room."})
 
 async def notify_leave(rooms,room_name, user_name):
     logging.info(f"User {user_name} disconnected from room: {room_name}")
-    await broadcast_to_room(rooms, room_name, {"type": "sys", "text": f"🛑 System: {user_name} left the room."})
+    await broadcast_to_room(rooms, room_name, {"type": "sys", "text": f"[SYSTEM] {user_name} left the room."})
 
 # async def EnterRoom(Room_manager,User_name):
 async def join_room_flow(websocket, Room_Manager, user_name, room_name):
