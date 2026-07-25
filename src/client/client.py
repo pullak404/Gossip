@@ -5,6 +5,9 @@ import sys
 import json
 import websockets
 import os
+
+from src.server.user import UserManager
+
 # HEADER = 64 # gives the length of the msg that clients will send
 # FORMAT = 'utf-8'
 # DISCONNECT_MESSAGE = "!DISCONNECT"
@@ -44,16 +47,19 @@ async def receive_loop(websocket):
         
         # Clear current input line placeholder, print message, restore user prompt character
         print("\r\033[K", end="") 
-        if payload["type"] == "sys":
-            print(f"{COLOR_SYS}{payload['text']}{COLOR_RST}")
-        elif payload["type"] == "msg":
-            print(f"{COLOR_MSG}[{payload['sender']}]{COLOR_RST}: {payload['text']}")
-            
+        msg_type = payload.get("type")
+        if msg_type == "sys":
+            print(f"{COLOR_SYS}{payload.get('text', '')}{COLOR_RST}")
+        elif msg_type == "msg":
+            print(f"{COLOR_MSG}[{payload.get('sender', '?')}]{COLOR_RST}: {payload.get('text', '')}")
+        else:
+            print(f"{COLOR_ERR}⚠ Received unrecognized payload from server: {payload}{COLOR_RST}")
+
         print("> ", end="", flush=True)
 
 async def send_loop(websocket):
     """Intercepts local standard keyboard streams without blocking the thread pool."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     while True:
         # Execute sys.stdin block off the main asynchronous thread loop
         user_input = await loop.run_in_executor(None, sys.stdin.readline)
@@ -61,8 +67,12 @@ async def send_loop(websocket):
         
         if sanitized.lower() == "exit":
             print("\nExiting interface application stack.")
-            # Hard exit the program when user manually requests escape
-            sys.exit(0)
+            # Hard exit the program when user manually requests escape.
+            # os._exit is used (not sys.exit) because this runs inside one of
+            # several concurrent asyncio tasks under asyncio.gather — sys.exit
+            # would only raise SystemExit in this task, which can get delayed
+            # or swallowed instead of actually terminating the process.
+            os._exit(0)
             
         if sanitized:
             await websocket.send(sanitized)
@@ -87,6 +97,7 @@ async def manage_connection(user_name,password):
                 current_delay = base_delay
                 
                 # Deliver Initial Configuration Handshake Frame instantly upon connection
+                
                 handshake_payload = {"user_name": user_name,"password": password}
                 await websocket.send(json.dumps(handshake_payload))
                 
@@ -134,13 +145,39 @@ async def manage_connection(user_name,password):
             break
 
 async def start_client():
-    # Gather metadata configurations up front so it persists across reconnection runs
-    user_name = input("Enter Chosen Display Handle Name: ").strip() or "User"
-    password = input("Enter your password: ").strip()
 
+    # UserManager keeps its user table in memory, backed by data/user.jsonl.
+    # It must be created once and initialized (which loads existing users
+    # from disk) before create_user/find_user are called against it.
+    manager = UserManager()
+    await manager.initialize()
+
+    true = 1
+    while true:
+        LoginOrSignup = input("Enter Login Or Signup: ").strip()
+        if LoginOrSignup.upper() == "LOGIN":
+            user_name = input("Enter Chosen Display Handle Name: ").strip()
+            password = input("Enter your password: ").strip()
+            true = 0
+        elif LoginOrSignup.upper() == "SIGNUP":
+            user_name = input("Enter Chosen Display Handle Name: ").strip()
+            password = input("Enter your password: ").strip()
+            await manager.create_user(user_name,password)
+            true = 0
+        elif LoginOrSignup.lower() == "!exit":
+            os._exit(1)
+        else:
+            print("Enter again correctly or type !exit to quit")
     await manage_connection(user_name,password)
 
 if __name__ == "__main__":
+    help_msg = """
+            Welcome\n
+            this is a chat app\n
+            If already a member enter login or if a new member enter signup\n
+            then enter a room to start gossiping!!!\n
+            Type !help for help and !exit to quit the application\n\n"""
+    print(help_msg)
     try:
         asyncio.run(start_client())
     except KeyboardInterrupt:
