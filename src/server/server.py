@@ -32,8 +32,8 @@ import asyncio
 import json
 import logging
 import websockets
-from rooms import *
-from user import *
+from .rooms import *
+from .user import *
 
 
 # Configure minimal console feedback
@@ -52,78 +52,129 @@ async def broadcast_to_room(rooms, room_name, payload_dict, exclude_socket=None)
                 except websockets.exceptions.ConnectionClosed:
                     rooms[room_name].active_connections.discard(connection)
 
-async def broadcast_to_user(payload_dict, websocket):
-        message = json.dumps(payload_dict)
+async def broadcast_to_user(websocket, msg, type, sender="system"):
+        payload = {"type": type, "sender":sender, "text": msg}
+        message = json.dumps(payload)
         try:
             await websocket.send(message)
         except websockets.exceptions.ConnectionClosed:
             pass
-async def create_room(user_name,RoomManager,websocket):
-    pass
-async def join_room(user_name,RoomManager,websocket):
-    pass
-async def authenticate_client(websocket, users):
+
+async def login(websocket,manager):
+    true = 1
+    loginMsg = "Enter Login Or Signup"
+    NameMsg = "Enter Chosen Display Handle Name: "
+    pwdMsg = "Enter your password: "
+    while true:
+        await broadcast_to_user(websocket,loginMsg,"sys")
+        LoginOrSignup = await websocket.recv()
+        if LoginOrSignup.upper() == "LOGIN":
+            await broadcast_to_user(websocket,NameMsg,"sys")
+            user_name = await websocket.recv()
+            await broadcast_to_user(websocket,pwdMsg,"sys")
+            password = await websocket.recv()
+            true = 0
+        elif LoginOrSignup.upper() == "SIGNUP":
+            await broadcast_to_user(websocket,NameMsg,"sys")
+            user_name = await websocket.recv()
+            await broadcast_to_user(websocket,pwdMsg,"sys")
+            password = await websocket.recv()
+            await manager.create_user(user_name,password)
+            true = 0
+        elif LoginOrSignup.lower() == "!exit":
+            os._exit(1)
+        else:
+            await broadcast_to_user(websocket,"Enter again correctly or type !exit to quit","sys")
+    return  user_name.strip(),password.strip()
+
+async def authenticate_client(websocket, User_Manager):
     """Reads the handshake packet, validates it, and returns the authenticated
     user_name on success or None on failure (closing/logging as appropriate).
     """
     try:
-        init_message = await websocket.recv()
-        handshake = json.loads(init_message)
-        user_name = handshake["user_name"]
-        password = handshake["password"]
+        user_name , password = await login(websocket,User_Manager)
     except Exception as e:
         logging.error(f"Invalid client handshake. Dropping connection. Due to {e}")
         return None
 
     # Reject unknown users rather than crashing on KeyError
-    if user_name not in users:
+    if user_name not in User_Manager.users:
         logging.error(f"User {user_name} does not exist. Dropping connection.")
         await websocket.close(code=4004, reason="User does not exist")
         return None
 
     # TODO: verify `password` against the stored credential on users[user_name]
     # once the User model (in user.py) exposes a way to check it, e.g.:
-    if not users[user_name].check_password(password):
+    if not User_Manager.users[user_name].check_password(password):
         logging.error(f"Invalid password for {user_name}. Dropping connection.")
         await websocket.close(code=4001, reason="Invalid credentials")
         return None
 
     return user_name
 
+async def send_room_list(websocket,user_name,Room_Manager):
+    joined , available = Room_Manager.list_rooms_for(user_name)
+    await broadcast_to_user(websocket,"Joined","sys")
+    i=0
+    for rooms in joined:
+        i+=1
+        await broadcast_to_user(websocket,f"{i}. {rooms}","sys")
+    i=0
+    await broadcast_to_user(websocket,"Available","sys")
+    for rooms in available:
+        i+=1
+        await broadcast_to_user(websocket,f"{i}. {rooms}","sys")
 
-async def handle_client(websocket, RoomManager, UserManager):
-    """Lifecycle handler executed concurrently for every incoming client."""
-    rooms = RoomManager.rooms
-    users = UserManager.users
+async def prompt_room_selection(websocket, user_name, Room_Manager):
+    pass
 
-    user_name = await authenticate_client(websocket, users)
-    if user_name is None:
-        return
+async def notify_join(rooms,room_name, user_name):
+    # Broadcast arrival status frame
+    logging.info(f"User {user_name} joined target room: {room_name}")
+    await broadcast_to_room(rooms, room_name, {"type": "sys", "text": f"📢 System: {user_name} joined the room."})
+
+async def notify_leave(rooms,room_name, user_name):
+    logging.info(f"User {user_name} disconnected from room: {room_name}")
+    await broadcast_to_room(rooms, room_name, {"type": "sys", "text": f"🛑 System: {user_name} left the room."})
+
+# async def EnterRoom(Room_manager,User_name):
+async def join_room_flow(websocket, Room_Manager, user_name, room_name):
+    Room_Manager.rooms[room_name].active_connections.add(websocket)
+    await notify_join(Room_Manager.rooms,room_name, user_name)
+    # await send_active_count(websocket, room_name)
 
     try:
-        async for raw_message in websocket:
-            if raw_message == "!create room":
-                await create_room(user_name,RoomManager,websocket)
+        async for message in websocket:
+            if message in ("!exit", "!quit"):
+                break
+            if room_name == "friends":
+                # await broadcast_to_friends(user, message)
+                pass
             else:
-                if raw_message == "!join room":
-                    room_name = await join_room(user_name,RoomManager,UserManager)
-                 # Add client socket to room roster
-                rooms[room_name].active_connections.add(websocket)
-                logging.info(f"User {user_name} joined target room: {room_name}")
-
-                # Broadcast arrival status frame
-                await broadcast_to_room(rooms, room_name, {"type": "sys", "text": f"📢 System: {user_name} joined the room."})
-                # Relay standard message payload out to all other clients in the same room
-                await broadcast_to_room(rooms,room_name,{"type": "msg", "sender": user_name, "text": raw_message},exclude_socket=websocket)
+                payload = {"type": "msg", "sender": user_name, "text": message}
+                await broadcast_to_room(Room_Manager.rooms,room_name, user_name, payload)
     except websockets.exceptions.ConnectionClosed:
         logging.info("Connection closed")
     finally:
-        # Graceful connection breakdown
-        if room_name in rooms:
-            rooms[room_name].active_connections.discard(websocket)
-        logging.info(f"User {user_name} disconnected from room: {room_name}")
-        await broadcast_to_room(rooms, room_name, {"type": "sys", "text": f"🛑 System: {user_name} left the room."})
+        Room_Manager.rooms[room_name].active_connections.discard(websocket)
+        await notify_leave(Room_Manager.rooms,room_name, user_name)
 
+async def handle_client(websocket, Room_Manager, User_Manager):
+    """Lifecycle handler executed concurrently for every incoming client."""
+    rooms = Room_Manager.rooms
+    users = User_Manager.users
+
+    user_name = await authenticate_client(websocket, User_Manager)
+    if user_name is None:
+        return
+    else:
+        logging.info(f"User {user_name} authentication succesfull")
+    
+    await send_room_list(websocket, user_name, Room_Manager)
+    room_name = await prompt_room_selection(websocket, user_name, Room_Manager)
+    if room_name is None:
+        return
+    await join_room_flow(websocket, Room_Manager, user_name, room_name)
 
 async def main():
     # Global tracking registry: room_name -> Room (built inside main, since

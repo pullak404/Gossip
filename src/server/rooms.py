@@ -1,5 +1,5 @@
-from auth import verify_hash
-from json_helper import *
+from .auth import verify_hash
+from .json_helper import *
 from datetime import datetime, UTC
 import asyncio
 

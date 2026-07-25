@@ -40,6 +40,8 @@ COLOR_MSG = "\033[94m"  # Blue remote messages
 COLOR_ERR = "\033[91m"  # Red connection errors
 COLOR_RST = "\033[0m"   # Reset code to default terminal state
 
+USER = "YOU"
+
 async def receive_loop(websocket):
     """Inbound stream execution layer routing updates to display instantly."""
     async for raw_payload in websocket:
@@ -55,7 +57,7 @@ async def receive_loop(websocket):
         else:
             print(f"{COLOR_ERR}⚠ Received unrecognized payload from server: {payload}{COLOR_RST}")
 
-        print("> ", end="", flush=True)
+        print(f"[{COLOR_MSG}{USER}{COLOR_RST}] ", end="", flush=True)
 
 async def send_loop(websocket):
     """Intercepts local standard keyboard streams without blocking the thread pool."""
@@ -65,7 +67,7 @@ async def send_loop(websocket):
         user_input = await loop.run_in_executor(None, sys.stdin.readline)
         sanitized = user_input.strip()
         
-        if sanitized.lower() == "exit":
+        if sanitized.lower() == "!exit":
             print("\nExiting interface application stack.")
             # Hard exit the program when user manually requests escape.
             # os._exit is used (not sys.exit) because this runs inside one of
@@ -76,9 +78,9 @@ async def send_loop(websocket):
             
         if sanitized:
             await websocket.send(sanitized)
-        print("> ", end="", flush=True)
+        print(f"[{COLOR_MSG}{USER}{COLOR_RST}] ", end="", flush=True)
 
-async def manage_connection(user_name,password):
+async def manage_connection():
     """Supervisor loop that connects, executes chat tasks, and retries on failure."""
     server_uri = "ws://127.0.0.1:8765"
     
@@ -98,8 +100,10 @@ async def manage_connection(user_name,password):
                 
                 # Deliver Initial Configuration Handshake Frame instantly upon connection
                 
-                handshake_payload = {"user_name": user_name,"password": password}
-                await websocket.send(json.dumps(handshake_payload))
+                # handshake_payload = {"user_name": user_name,"password": password}
+                # await websocket.send(json.dumps(handshake_payload))
+                ##Rather than this send device ipv4 address and location
+
                 
                 print(f"Connected! Type messages below. Type 'exit' to escape.\n> ", end="", flush=True)
                 
@@ -146,29 +150,7 @@ async def manage_connection(user_name,password):
 
 async def start_client():
 
-    # UserManager keeps its user table in memory, backed by data/user.jsonl.
-    # It must be created once and initialized (which loads existing users
-    # from disk) before create_user/find_user are called against it.
-    manager = UserManager()
-    await manager.initialize()
-
-    true = 1
-    while true:
-        LoginOrSignup = input("Enter Login Or Signup: ").strip()
-        if LoginOrSignup.upper() == "LOGIN":
-            user_name = input("Enter Chosen Display Handle Name: ").strip()
-            password = input("Enter your password: ").strip()
-            true = 0
-        elif LoginOrSignup.upper() == "SIGNUP":
-            user_name = input("Enter Chosen Display Handle Name: ").strip()
-            password = input("Enter your password: ").strip()
-            await manager.create_user(user_name,password)
-            true = 0
-        elif LoginOrSignup.lower() == "!exit":
-            os._exit(1)
-        else:
-            print("Enter again correctly or type !exit to quit")
-    await manage_connection(user_name,password)
+    await manage_connection()
 
 if __name__ == "__main__":
     help_msg = """

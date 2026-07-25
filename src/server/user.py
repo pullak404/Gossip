@@ -1,5 +1,5 @@
-from json_helper import *
-from auth import *
+from .json_helper import *
+from .auth import *
 from datetime import datetime, UTC
 import asyncio
 
