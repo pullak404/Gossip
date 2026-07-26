@@ -82,7 +82,7 @@ async def send_loop(websocket):
 
 async def manage_connection():
     """Supervisor loop that connects, executes chat tasks, and retries on failure."""
-    server_uri = "ws://127.0.0.1:8765"
+    server_uri = "ws://34.131.187.50:8765"
     
     # Backoff configurations
     base_delay = 1.0      # Start with a 1-second delay

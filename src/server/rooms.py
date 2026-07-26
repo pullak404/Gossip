@@ -111,7 +111,7 @@ class RoomManager:
 # async def main():
 #     manager = RoomManager()
 #     await manager.initialize()
-#     await manager.create_room("eee","abcd","pullak")
+#     await manager.create_room("family","mohapatra","pullak")
 #     await manager.create_room("vssut", "abcd", "pullak")
 #     joined,available = manager.list_rooms_for("pullak")
 #     print(joined,available)
