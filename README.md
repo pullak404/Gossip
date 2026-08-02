@@ -4,9 +4,14 @@ A Python based end-to-end encrypted communication app
 
 ## Programming Language
     - Python
-
-## DataBase
-    - MongoDB - data storage
-
+## Required Module
+    - websockets
+    To download websockets
+    '''pip install websockets
+    '''
 ## How To Use
-    Python client.py
+    ''' git clone https://github.com/pullak404/Gossip
+    cd Gossip
+    python src.client.client
+    '''
+    
