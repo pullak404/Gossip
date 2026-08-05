@@ -1,30 +1,4 @@
-# class ConnectionManager:
-#     def __init__(self):
-#         # Maps room_name -> set of active WebSocket connections on THIS server instance
-#         self.active_connections: dict[str, set[]] = {}
 
-#     async def connect(self, websocket, room_name: str):
-#         await websocket.accept()
-#         if room_name not in self.active_connections:
-#             self.active_connections[room_name] = set()
-#         self.active_connections[room_name].add(websocket)
-
-#     def disconnect(self, websocket: WebSocket, room_name: str):
-#         if room_name in self.active_connections:
-#             self.active_connections[room_name].discard(websocket)
-#             if not self.active_connections[room_name]:
-#                 del self.active_connections[room_name]
-
-#     async def broadcast_to_local_room(self, room_name: str, message: str):
-#         """Sends the message to all clients connected to this specific server instance."""
-#         if room_name in self.active_connections:
-#             # Create a snapshot list to avoid runtime size change errors during iteration
-#             for connection in list(self.active_connections[room_name]):
-#                 try:
-#                     await connection.send_text(message)
-#                 except Exception:
-#                     # Clear broken connections immediately
-#                     self.disconnect(connection, room_name)
 
 # manager = ConnectionManager()
 
@@ -35,57 +9,13 @@ import websockets
 from .rooms import *
 from .user import *
 
+from .broadcast import *
+from .auth import *
 
 # Configure minimal console feedback
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 
 
-async def broadcast_to_room(rooms, room_name, payload_dict, exclude_socket=None):
-    """Iterates over active room sockets to publish structured JSON payloads."""
-    if room_name in rooms:
-        message = json.dumps(payload_dict)
-        # Snapshot list to avoid mutating the set while iterating over it
-        for connection in list(rooms[room_name].active_connections):
-            if connection != exclude_socket:
-                try:
-                    await connection.send(message)
-                except websockets.exceptions.ConnectionClosed:
-                    rooms[room_name].active_connections.discard(connection)
-
-async def broadcast_to_user(websocket, msg, type, sender="system"):
-        payload = {"type": type, "sender":sender, "text": msg}
-        message = json.dumps(payload)
-        try:
-            await websocket.send(message)
-        except websockets.exceptions.ConnectionClosed:
-            pass
-
-async def login(websocket,manager):
-    true = 1
-    loginMsg = "Enter Login Or Signup"
-    NameMsg = "Enter Chosen Display Handle Name: "
-    pwdMsg = "Enter your password: "
-    while true:
-        await broadcast_to_user(websocket,loginMsg,"sys")
-        LoginOrSignup = await websocket.recv()
-        if LoginOrSignup.upper() == "LOGIN":
-            await broadcast_to_user(websocket,NameMsg,"sys")
-            user_name = await websocket.recv()
-            await broadcast_to_user(websocket,pwdMsg,"sys")
-            password = await websocket.recv()
-            true = 0
-        elif LoginOrSignup.upper() == "SIGNUP":
-            await broadcast_to_user(websocket,NameMsg,"sys")
-            user_name = await websocket.recv()
-            await broadcast_to_user(websocket,pwdMsg,"sys")
-            password = await websocket.recv()
-            await manager.create_user(user_name,password)
-            true = 0
-        elif LoginOrSignup.lower() == "!exit":
-            os._exit(1)
-        else:
-            await broadcast_to_user(websocket,"Enter again correctly or type !exit to quit","sys")
-    return  user_name.strip(),password.strip()
 
 async def authenticate_client(websocket, User_Manager):
     """Reads the handshake packet, validates it, and returns the authenticated
